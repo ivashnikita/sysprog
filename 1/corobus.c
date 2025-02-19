@@ -256,31 +256,53 @@ coro_bus_try_recv(struct coro_bus *bus, int channel, unsigned *data)
 int
 coro_bus_broadcast(struct coro_bus *bus, unsigned data)
 {
-	int cnt = 0;
+	int current_сnt = 0;
+	int registered_сhannels_сnt = 0;
 
 	for (int i = 0; i < bus->channel_count; i++) {
 		if (bus->channels[i] == NULL) {
 			continue;
 		}
 
-		struct coro_bus_channel *ch = bus->channels[i];
-
-		while (ch->data.size >= ch->size_limit) {
-			wakeup_queue_suspend_this(&ch->send_queue);
-
-			if (is_incorrect_channel(bus, i)) {
-				coro_bus_errno_set(CORO_BUS_ERR_NO_CHANNEL);
-				return -1;
-			}
-		}
-
-		cnt++;
+		registered_сhannels_сnt++;
 	}
 
-	if (cnt == 0) {
+	if (registered_сhannels_сnt == 0) {
 		coro_bus_errno_set(CORO_BUS_ERR_NO_CHANNEL);
 		return -1;
 	}
+
+	/*
+	 * The main idea is that we should check all channels again
+	 * even if only one channel is full, because old channels
+	 * might become full again
+	 */
+	while (current_сnt < registered_сhannels_сnt) {
+		for (int i = 0; i < bus->channel_count; i++) {
+			if (bus->channels[i] == NULL) {
+				continue;
+			}
+
+			struct coro_bus_channel *ch = bus->channels[i];
+			current_сnt++;
+
+			if (ch->data.size >= ch->size_limit) {
+				current_сnt = 0;
+
+				while (ch->data.size >= ch->size_limit) {
+					wakeup_queue_suspend_this(&ch->send_queue);
+
+					if (is_incorrect_channel(bus, i)) {
+						coro_bus_errno_set(CORO_BUS_ERR_NO_CHANNEL);
+						return -1;
+					}
+				}
+
+				break;
+			}
+		}
+	}
+
 
 	for (int i = 0; i < bus->channel_count; i++) {
 		if (bus->channels[i] == NULL) {
