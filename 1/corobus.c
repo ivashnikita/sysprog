@@ -293,8 +293,8 @@ coro_bus_broadcast(struct coro_bus *bus, unsigned data)
 					wakeup_queue_suspend_this(&ch->send_queue);
 
 					if (is_incorrect_channel(bus, i)) {
-						coro_bus_errno_set(CORO_BUS_ERR_NO_CHANNEL);
-						return -1;
+						registered_сhannels_сnt--;
+						break;
 					}
 				}
 
