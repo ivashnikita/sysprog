@@ -123,7 +123,9 @@ delete_fd(int fd) {
 		return -1;
 	}
 
-	file_descriptors[fd]->file->refs--;
+	struct filedesc *fdesc = file_descriptors[fd];
+	fdesc->file->refs--;
+	free(fdesc);
 	file_descriptors[fd] = NULL;
 
 	return 0;
@@ -381,13 +383,27 @@ ufs_delete(const char *filename)
 	if (!file->prev && !file->next) {
 		file_list = NULL;
 	} else if (!file->prev) {
+		file_list = file->next;
 		file->next->prev = NULL;
 	} else if (!file->next) {
 		file->prev->next = NULL;
 	} else {
 		file->prev->next = file->next;
-		file->next = file->prev;
+		file->next->prev = file->prev;
 	}
+
+	struct block *current_block = file->block_list;
+	while (current_block != NULL) {
+		struct block *next_block = current_block->next;
+
+		free(current_block->memory);
+		free(current_block);
+
+		current_block = next_block;
+	}
+
+	free(file->name);
+	free(file);
 
 	return 0;
 }
@@ -409,4 +425,29 @@ ufs_resize(int fd, size_t new_size)
 void
 ufs_destroy(void)
 {
+	struct file *file = file_list;
+
+	while (file) {
+		struct block *block = file->block_list;
+
+		while (block) {
+			free(block->memory);
+			struct block *buf = block;
+			block = block->next;
+			free(buf);
+		}
+
+		free(file->name);
+
+		struct file *buf = file;
+		file = file->next;
+		free(buf);
+	}
+
+	for (int i = 0; i < file_descriptor_count; i++) {
+		struct filedesc *fd = file_descriptors[i];
+		free(fd);
+	}
+
+	free(file_descriptors);
 }
