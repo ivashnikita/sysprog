@@ -49,6 +49,8 @@ static struct file *file_list = NULL;
 struct filedesc {
 	struct file *file;
 
+	enum open_flags mode;
+
 	int current_block;
 	int current_position;
 };
@@ -75,6 +77,22 @@ is_incorrect_fd(const int fd) {
 	return fd < 0 || fd >= file_descriptor_capacity || !file_descriptors[fd];
 }
 
+int
+does_have_read_permission(const int fd) {
+	struct filedesc *fdesc = file_descriptors[fd];
+	enum open_flags mode = fdesc->mode;
+
+	return mode == UFS_READ_WRITE || mode == UFS_READ_ONLY;
+}
+
+int
+does_have_write_permission(const int fd) {
+	struct filedesc *fdesc = file_descriptors[fd];
+	enum open_flags mode = fdesc->mode;
+
+	return mode == UFS_READ_WRITE || mode == UFS_WRITE_ONLY;
+}
+
 void
 resize_file_descriptors() {
 	if (file_descriptor_capacity == 0) {
@@ -90,8 +108,10 @@ resize_file_descriptors() {
 }
 
 int
-create_fd(struct file* file) {
+create_fd(struct file* file, enum open_flags mode) {
 	struct filedesc *fd = malloc(sizeof(struct filedesc));
+
+	fd->mode = mode;
 
 	fd->current_block = 0;
 	fd->current_position = 0;
@@ -174,7 +194,7 @@ file_list_add(struct file *file) {
 int
 ufs_open(const char *filename, int flags)
 {
-	if (flags == 0) {
+	if (flags != UFS_CREATE) {
 		struct file *file = get_file(filename);
 
 		if (!file) {
@@ -182,37 +202,37 @@ ufs_open(const char *filename, int flags)
 			return -1;
 		}
 
-		return create_fd(file);
-	}
-
-	if (flags == UFS_CREATE) {
-		struct file *file = get_file(filename);
-
-		if (file) {
-			return create_fd(file);
+		if (flags == 0) {
+			return create_fd(file, UFS_READ_WRITE);
 		}
 
-		file = malloc(sizeof(struct file));
-		struct block *block = malloc(sizeof(struct block));
-
-		block->occupied = 0;
-		block->memory = malloc(BLOCK_SIZE);
-		block->prev = NULL;
-		block->next = NULL;
-
-		file->block_list = block;
-		file->last_block = block;
-		file->size = 0;
-
-		file->name = malloc(strlen(filename) + 1);
-		strcpy(file->name, filename);
-
-		file_list_add(file);
-
-		return create_fd(file);
+		return create_fd(file, flags);
 	}
 
-	return -1;
+	struct file *file = get_file(filename);
+
+	if (file) {
+		return create_fd(file, UFS_READ_WRITE);
+	}
+
+	file = malloc(sizeof(struct file));
+	struct block *block = malloc(sizeof(struct block));
+
+	block->occupied = 0;
+	block->memory = malloc(BLOCK_SIZE);
+	block->prev = NULL;
+	block->next = NULL;
+
+	file->block_list = block;
+	file->last_block = block;
+	file->size = 0;
+
+	file->name = malloc(strlen(filename) + 1);
+	strcpy(file->name, filename);
+
+	file_list_add(file);
+
+	return create_fd(file, UFS_READ_WRITE);
 }
 
 ssize_t
@@ -220,6 +240,12 @@ ufs_write(int fd, const char *buf, size_t size)
 {
 	if (is_incorrect_fd(fd)) {
 		ufs_error_code = UFS_ERR_NO_FILE;
+
+		return -1;
+	}
+
+	if (!does_have_write_permission(fd)) {
+		ufs_error_code = UFS_ERR_NO_PERMISSION;
 
 		return -1;
 	}
@@ -306,6 +332,12 @@ ufs_read(int fd, char *buf, size_t size)
 {
 	if (is_incorrect_fd(fd)) {
 		ufs_error_code = UFS_ERR_NO_FILE;
+
+		return -1;
+	}
+
+	if (!does_have_read_permission(fd)) {
+		ufs_error_code = UFS_ERR_NO_PERMISSION;
 
 		return -1;
 	}
