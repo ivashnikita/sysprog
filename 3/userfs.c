@@ -445,11 +445,71 @@ ufs_delete(const char *filename)
 int
 ufs_resize(int fd, size_t new_size)
 {
-	/* IMPLEMENT THIS FUNCTION */
-	(void)fd;
-	(void)new_size;
-	ufs_error_code = UFS_ERR_NOT_IMPLEMENTED;
-	return -1;
+	if (is_incorrect_fd(fd)) {
+		ufs_error_code = UFS_ERR_NO_FILE;
+
+		return -1;
+	}
+
+	if (!does_have_write_permission(fd)) {
+		ufs_error_code = UFS_ERR_NO_PERMISSION;
+
+		return -1;
+	}
+
+	struct filedesc *fd_info = file_descriptors[fd];
+	struct file *file = fd_info->file;
+	struct block *block = file->block_list;
+
+	int required_blocks_count = (new_size + BLOCK_SIZE / 2) / BLOCK_SIZE;
+	int current_blocks_count = (file->size + BLOCK_SIZE / 2) / BLOCK_SIZE;
+
+	if (current_blocks_count <= required_blocks_count) {
+		for (int i = current_blocks_count - 1; i < required_blocks_count; i++) {
+			struct block *new_last_block = malloc(sizeof(struct block));
+
+			block->next = new_last_block;
+			new_last_block->prev = block;
+
+			new_last_block->occupied = 0;
+			new_last_block->memory = malloc(BLOCK_SIZE);
+			new_last_block->next = NULL;
+
+			file->last_block = new_last_block;
+		}
+	} else {
+		for (int i = 0; i < required_blocks_count + 1; i++) {
+			block = block->next;
+		}
+
+		file->size = new_size;
+		file->last_block = block->prev;
+		file->last_block->next = NULL;
+
+		for (int i = required_blocks_count; i < current_blocks_count - 1; i++) {
+			free(block->memory);
+			struct block *buf = block;
+			block = block->next;
+			free(buf);
+		}
+
+		int new_current_position = (int)new_size - required_blocks_count * BLOCK_SIZE;
+
+		for (int i = 0; i < file_descriptor_count; i++) {
+			struct filedesc *fdesc = file_descriptors[i];
+
+			if (fdesc && strcmp(fdesc->file->name, file->name) == 0) {
+				if (fdesc->current_block * BLOCK_SIZE + fdesc->current_position > (int)new_size) {
+					fdesc->current_block = required_blocks_count;
+					fdesc->current_position = new_current_position;
+				}
+
+				fdesc->file->last_block->occupied = new_current_position;
+			}
+		}
+	}
+
+	return 0;
 }
 
 #endif
