@@ -459,25 +459,34 @@ ufs_resize(int fd, size_t new_size)
 
 	struct filedesc *fd_info = file_descriptors[fd];
 	struct file *file = fd_info->file;
-	struct block *block = file->block_list;
 
 	int required_blocks_count = (new_size + BLOCK_SIZE / 2) / BLOCK_SIZE;
 	int current_blocks_count = (file->size + BLOCK_SIZE / 2) / BLOCK_SIZE;
 
-	if (current_blocks_count <= required_blocks_count) {
-		for (int i = current_blocks_count - 1; i < required_blocks_count; i++) {
-			struct block *new_last_block = malloc(sizeof(struct block));
+	if (current_blocks_count < required_blocks_count) {
+		struct block *block = file->last_block;
 
-			block->next = new_last_block;
-			new_last_block->prev = block;
+		for (int i = current_blocks_count; i < required_blocks_count; i++) {
+			struct block *new_block = malloc(sizeof(struct block));
 
-			new_last_block->occupied = 0;
-			new_last_block->memory = malloc(BLOCK_SIZE);
-			new_last_block->next = NULL;
+			new_block->memory = malloc(BLOCK_SIZE);
+			new_block->occupied = 0;
+			new_block->prev = block;
+			new_block->next = NULL;
 
-			file->last_block = new_last_block;
+			if (block) {
+				block->next = new_block;
+			} else {
+				file->block_list = new_block;
+			}
+
+			block = new_block;
 		}
+
+		file->last_block = block;
 	} else {
+		struct block *block = file->block_list;
+
 		for (int i = 0; i < required_blocks_count + 1; i++) {
 			block = block->next;
 		}
