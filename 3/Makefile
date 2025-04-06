@@ -1,8 +1,7 @@
-GCC_FLAGS = -Wextra -Werror -Wall -Wno-gnu-folding-constant
+GCC_FLAGS = -Wextra -Werror -Wall -Wno-gnu-folding-constant -g
+#GCC_FLAGS = -g
 
-all: test
-
-test:
+all:
 	gcc $(GCC_FLAGS) userfs.c test.c ../utils/unit.c -I ../utils -o test
 
 # For automatic testing systems to be able to just build whatever was submitted
