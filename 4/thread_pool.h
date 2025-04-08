@@ -28,7 +28,8 @@ enum {
 	TPOOL_MAX_TASKS = 100000,
 };
 
-enum thread_poool_errcode {
+enum thread_pool_errcode {
+	TPOOL_NO_ERR = 0,
 	TPOOL_ERR_INVALID_ARGUMENT = 1,
 	TPOOL_ERR_TOO_MANY_TASKS,
 	TPOOL_ERR_HAS_TASKS,
@@ -36,6 +37,13 @@ enum thread_poool_errcode {
 	TPOOL_ERR_TASK_IN_POOL,
 	TPOOL_ERR_NOT_IMPLEMENTED,
 	TPOOL_ERR_TIMEOUT,
+};
+
+enum task_status {
+	TASK_CREATED,
+	TASK_PUSHED,
+	TASK_RUNNING,
+	TASK_FINISHED,
 };
 
 /** Thread pool API. */
