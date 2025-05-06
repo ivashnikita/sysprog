@@ -1,5 +1,5 @@
 #pragma once
-
+#include "../utils/rlist.h"
 /**
  * Here you should specify which features do you want to implement via macros:
  * If you want to enable author name support, do:
@@ -40,7 +40,7 @@ struct chat_message {
 	/** 0-terminate text. */
 	char *data;
 
-	/* PUT HERE OTHER MEMBERS */
+	struct rlist node;
 };
 
 /** Free message's memory. */
