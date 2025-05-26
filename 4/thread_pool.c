@@ -2,6 +2,7 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include "rlist.h"
+#include <stdio.h>
 
 struct thread_task {
 	thread_task_f function;
@@ -12,6 +13,7 @@ struct thread_task {
 	pthread_cond_t is_finished_cond;
 
 	bool is_joined;
+	bool is_detached;
 
 	enum task_status status;
 	struct rlist list_node;
@@ -31,6 +33,7 @@ struct thread_pool {
 	int active_thread_count;
 	int free_thread_count;
 	int tasks_count;
+	int in_progress_count;
 };
 
 int
@@ -56,17 +59,27 @@ void *worker(void *arg) {
 		struct thread_task *task = rlist_shift_entry(&pool->tasks, struct thread_task, list_node);
 		pool->free_thread_count--;
 		pool->tasks_count--;
+		pool->in_progress_count++;
 		pthread_mutex_unlock(&pool->mutex);
 
 		task->status = TASK_RUNNING;
-		task->result = task->function(task->arg);
+		void *result = task->function(task->arg);
+		task->result = result;
 
-		pthread_mutex_lock(&pool->mutex);
-
-		pool->free_thread_count++;
+		pthread_mutex_lock(&task->mutex);
 		task->status = TASK_FINISHED;
 		pthread_cond_signal(&task->is_finished_cond);
-		pthread_mutex_unlock(&task->mutex);
+		
+		if (task->is_detached) {
+			pthread_mutex_unlock(&task->mutex);
+			free(task);
+		} else {
+			pthread_mutex_unlock(&task->mutex);
+		}
+
+		pthread_mutex_lock(&pool->mutex);
+		pool->free_thread_count++;
+		pool->in_progress_count--;
 	}
 
 	pthread_mutex_unlock(&pool->mutex);
@@ -89,6 +102,7 @@ thread_pool_new(int max_thread_count, struct thread_pool **pool)
 	(*pool)->free_thread_count = 0;
 	(*pool)->max_thread_count = max_thread_count;
 	(*pool)->is_shutdown = false;
+	(*pool)->in_progress_count = 0;
 
 	rlist_create(&(*pool)->tasks);
 
@@ -107,8 +121,19 @@ thread_pool_thread_count(const struct thread_pool *pool)
 int
 thread_pool_delete(struct thread_pool *pool)
 {
+	pthread_mutex_lock(&pool->mutex);
+
 	if (!rlist_empty(&pool->tasks) || pool->active_thread_count != pool->free_thread_count) {
+		pthread_mutex_unlock(&pool->mutex);
 		return TPOOL_ERR_HAS_TASKS;
+	}
+
+	pool->is_shutdown = true;
+	pthread_cond_broadcast(&pool->cond);
+	pthread_mutex_unlock(&pool->mutex);
+
+	for (int i = 0; i < pool->active_thread_count; i++) {
+		pthread_join(pool->threads[i], NULL);
 	}
 
 	free(pool->threads);
@@ -122,7 +147,7 @@ thread_pool_push_task(struct thread_pool *pool, struct thread_task *task)
 {
 	pthread_mutex_lock(&pool->mutex);
 
-	if (pool->tasks_count >= TPOOL_MAX_TASKS) {
+	if (pool->tasks_count + pool->in_progress_count >= TPOOL_MAX_TASKS) {
 		pthread_mutex_unlock(&pool->mutex);
 		return TPOOL_ERR_TOO_MANY_TASKS;
 	}
@@ -137,7 +162,10 @@ thread_pool_push_task(struct thread_pool *pool, struct thread_task *task)
 	}
 
 	task->status = TASK_PUSHED;
-	task->mutex = pool->mutex;
+	task->is_joined = false;
+	task->is_detached = false;
+	pthread_mutex_init(&task->mutex, NULL);
+	pthread_cond_init(&task->is_finished_cond, NULL);
 
 	pthread_cond_signal(&pool->cond);
 	pthread_mutex_unlock(&pool->mutex);
@@ -154,6 +182,8 @@ thread_task_new(struct thread_task **task, thread_task_f function, void *arg)
 	(*task)->arg = arg;
 
 	(*task)->status = TASK_CREATED;
+	(*task)->is_joined = false;
+	(*task)->is_detached = false;
 
 	pthread_mutex_init(&(*task)->mutex, NULL);
 	pthread_cond_init(&(*task)->is_finished_cond, NULL);
@@ -225,9 +255,21 @@ thread_task_delete(struct thread_task *task)
 int
 thread_task_detach(struct thread_task *task)
 {
-	/* IMPLEMENT THIS FUNCTION */
-	(void)task;
-	return TPOOL_ERR_NOT_IMPLEMENTED;
+	if (task->status == TASK_CREATED) {
+		return TPOOL_ERR_TASK_NOT_PUSHED;
+	}
+
+	pthread_mutex_lock(&task->mutex);
+
+	if (task->status == TASK_FINISHED) {
+		pthread_mutex_unlock(&task->mutex);
+		free(task);
+	} else {
+		task->is_detached = true;
+		pthread_mutex_unlock(&task->mutex);
+	}
+
+	return TPOOL_NO_ERR;
 }
 
 #endif
