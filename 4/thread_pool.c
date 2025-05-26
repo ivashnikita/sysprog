@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include "rlist.h"
 #include <stdio.h>
+#include <time.h>
+#include <sys/time.h>
+#include <errno.h>
 
 struct thread_task {
 	thread_task_f function;
@@ -229,11 +232,46 @@ thread_task_join(struct thread_task *task, void **result)
 int
 thread_task_timed_join(struct thread_task *task, double timeout, void **result)
 {
-	/* IMPLEMENT THIS FUNCTION */
-	(void)task;
-	(void)timeout;
-	(void)result;
-	return TPOOL_ERR_NOT_IMPLEMENTED;
+	if (task->status == TASK_CREATED) {
+		return TPOOL_ERR_TASK_NOT_PUSHED;
+	}
+
+	pthread_mutex_lock(&task->mutex);
+
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+
+	time_t seconds = (time_t)timeout;
+	time_t ns = (time_t)((timeout - (long)seconds) * 1e9);
+
+	ts.tv_sec += seconds;
+	ts.tv_nsec += ns;
+
+	long ts_total_ns = ts.tv_sec * 1e9 + ts.tv_nsec;
+
+	while (task->status != TASK_FINISHED) {
+		pthread_cond_timedwait(&task->is_finished_cond, &task->mutex, &ts);
+
+		struct timespec current_ts;
+		clock_gettime(CLOCK_MONOTONIC, &current_ts);
+
+		long current_total_ns = current_ts.tv_sec * 1e9 + current_ts.tv_nsec;  
+
+		if (current_total_ns > ts_total_ns) {
+			break;
+		}
+	}
+
+	if (task->status == TASK_FINISHED) {
+		*result = task->result;
+		task->is_joined = true;
+		pthread_mutex_unlock(&task->mutex);
+
+		return TPOOL_NO_ERR;
+	}
+
+	pthread_mutex_unlock(&task->mutex);
+	return TPOOL_ERR_TIMEOUT;
 }
 
 #endif
