@@ -69,20 +69,23 @@ void *worker(void *arg) {
 		void *result = task->function(task->arg);
 		task->result = result;
 
+		pthread_mutex_lock(&pool->mutex);
+		pool->free_thread_count++;
+		pool->in_progress_count--;
+		pthread_mutex_unlock(&pool->mutex);
+
 		pthread_mutex_lock(&task->mutex);
 		task->status = TASK_FINISHED;
-		pthread_cond_signal(&task->is_finished_cond);
-		
+
 		if (task->is_detached) {
 			pthread_mutex_unlock(&task->mutex);
 			free(task);
 		} else {
+			pthread_cond_signal(&task->is_finished_cond);
 			pthread_mutex_unlock(&task->mutex);
 		}
 
 		pthread_mutex_lock(&pool->mutex);
-		pool->free_thread_count++;
-		pool->in_progress_count--;
 	}
 
 	pthread_mutex_unlock(&pool->mutex);
@@ -138,6 +141,9 @@ thread_pool_delete(struct thread_pool *pool)
 	for (int i = 0; i < pool->active_thread_count; i++) {
 		pthread_join(pool->threads[i], NULL);
 	}
+
+	pthread_mutex_destroy(&pool->mutex);
+	pthread_cond_destroy(&pool->cond);
 
 	free(pool->threads);
 	free(pool);
