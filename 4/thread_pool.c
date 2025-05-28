@@ -100,8 +100,8 @@ thread_pool_new(int max_thread_count, struct thread_pool **pool)
 		return TPOOL_ERR_INVALID_ARGUMENT;
 	}
 
-	void *threads = malloc(sizeof(pthread_t) * TPOOL_MAX_THREADS);
-	*pool = malloc(sizeof(struct thread_pool));
+	void *threads = calloc(TPOOL_MAX_THREADS, sizeof(pthread_t));
+	*pool = calloc(1, sizeof(struct thread_pool));
 	(*pool)->threads = threads;
 
 	(*pool)->active_thread_count = 0;
@@ -185,7 +185,7 @@ thread_pool_push_task(struct thread_pool *pool, struct thread_task *task)
 int
 thread_task_new(struct thread_task **task, thread_task_f function, void *arg)
 {
-	*task = malloc(sizeof(struct thread_task));
+	*task = calloc(1, sizeof(struct thread_task));
 
 	(*task)->function = function;
 	(*task)->arg = arg;
