@@ -36,16 +36,18 @@ execute_command_line(const struct command_line *line, int *exit_code)
 					perror("cd failed");
 				}
 
-				break;
-			}
+                e = e->next;
+                continue;
+            }
 
-			if (strcmp(cmd->exe, "exit") == 0 && !e->next && fd_in == STDIN_FILENO) {
-				if (cmd->args) {
-					exit(atoi(cmd->args[0]));
-				}
-
-				exit(0);
-			}
+            if (strcmp(cmd->exe, "exit") == 0 && !e->next && fd_in == STDIN_FILENO) {
+                if (cmd->args) {
+                    *exit_code = atoi(cmd->args[0]);
+                } else {
+                    *exit_code = 0;
+                }
+                break;
+            }
 
 			bool is_use_pipe = e->next && e->next->type == EXPR_TYPE_PIPE;
 			bool is_use_file = (out_type == OUTPUT_TYPE_FILE_NEW || out_type == OUTPUT_TYPE_FILE_APPEND)\
@@ -55,32 +57,23 @@ execute_command_line(const struct command_line *line, int *exit_code)
 				pipe(fds);
 			}
 
-			pid = fork();
-			if (pid == -1) {
-				perror("fork failed");
-				exit(EXIT_FAILURE);
-			}
+            pid = fork();
+            if (pid == -1) {
+                perror("fork failed");
+                return;
+            }
 
-			if (pid == 0) {
-				if (strcmp(cmd->exe, "exit") == 0) {
-					if (cmd->args) {
-						exit(atoi(cmd->args[0]));
-					}
+            if (pid == 0) {
+                if (fd_in != STDIN_FILENO) {
+                    dup2(fd_in, STDIN_FILENO);
+                    close(fd_in);
+                }
 
-					exit(EXIT_SUCCESS);
-				}
-
-				if (fd_in != STDIN_FILENO) {
-					dup2(fd_in, STDIN_FILENO);
-					close(fd_in);
-				}
-
-				if (is_use_pipe) {
-					dup2(fds[1], STDOUT_FILENO);
-					close(fds[1]);
-
-					close(fds[0]);
-				}
+                if (is_use_pipe) {
+                    close(fds[0]);
+                    dup2(fds[1], STDOUT_FILENO);
+                    close(fds[1]);
+                }
 
 				if (is_use_file) {
 					int flags = out_type == OUTPUT_TYPE_FILE_NEW ? O_RDWR | O_TRUNC | O_CREAT : O_RDWR | O_APPEND;
@@ -88,6 +81,15 @@ execute_command_line(const struct command_line *line, int *exit_code)
 					dup2(fd, STDOUT_FILENO);
 					close(fd);
 				}
+
+                if (strcmp(cmd->exe, "exit") == 0) {
+                    if (cmd->args) {
+                        *exit_code = atoi(cmd->args[0]) ;
+                    } else {
+	                    *exit_code = EXIT_SUCCESS;
+                    }
+                    _exit(*exit_code);
+                }
 
 				size_t arg_count = cmd->arg_count + 2;
 				char **argv = calloc(arg_count, sizeof(char *));
@@ -135,26 +137,47 @@ execute_command_line(const struct command_line *line, int *exit_code)
 int
 main(void)
 {
-	const size_t buf_size = 1024;
-	char buf[buf_size];
-	int rc;
-	int exit_code;
-	struct parser *p = parser_new();
-	while ((rc = read(STDIN_FILENO, buf, buf_size)) > 0) {
-		parser_feed(p, buf, rc);
-		struct command_line *line = NULL;
-		while (true) {
-			enum parser_error err = parser_pop_next(p, &line);
-			if (err == PARSER_ERR_NONE && line == NULL)
-				break;
-			if (err != PARSER_ERR_NONE) {
-				printf("Error: %d\n", (int)err);
-				continue;
-			}
-			execute_command_line(line, &exit_code);
-			command_line_delete(line);
-		}
-	}
-	parser_delete(p);
-	return exit_code;
+    const size_t buf_size = 1024;
+    char buf[buf_size];
+    int rc;
+    int exit_code = 0;
+    struct parser *p = parser_new();
+
+    while ((rc = read(STDIN_FILENO, buf, buf_size)) > 0) {
+        parser_feed(p, buf, rc);
+        struct command_line *line = NULL;
+
+        while (true) {
+            enum parser_error err = parser_pop_next(p, &line);
+
+            if (err == PARSER_ERR_NONE && line == NULL) {
+                break;
+            }
+
+            if (err != PARSER_ERR_NONE) {
+                printf("Error: %d\n", (int)err);
+                continue;
+            }
+
+        	if (line->head && line->head->type == EXPR_TYPE_COMMAND) {
+        		struct command *cmd = &line->head->cmd;
+        		struct expr *next = line->head->next;
+
+        		if (strcmp(cmd->exe, "exit") == 0 && (!next || next->type != EXPR_TYPE_PIPE)) {
+        			exit_code = cmd->args ? atoi(cmd->args[0]) : 0;
+
+        			command_line_delete(line);
+        			parser_delete(p);
+
+        			return exit_code;
+				}
+        	}
+
+            execute_command_line(line, &exit_code);
+            command_line_delete(line);
+        }
+    }
+
+    parser_delete(p);
+    return exit_code;
 }
