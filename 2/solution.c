@@ -8,8 +8,76 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+struct background_jobs {
+    pid_t *pids;
+    int count;
+    int capacity;
+};
+
+bool
+is_valid_pid_idx(struct background_jobs *bg_jobs, int idx) {
+    return idx >= 0 && idx < bg_jobs->count;
+}
+
+void
+init_bg_jobs(struct background_jobs *bg_jobs) {
+    bg_jobs->pids = calloc(10, sizeof(pid_t));
+    bg_jobs->count = 0;
+    bg_jobs->capacity = 10;
+}
+
+void
+add_bg_job(struct background_jobs *bg_jobs, pid_t pid) {
+    if (bg_jobs->count == bg_jobs->capacity) {
+        bg_jobs->capacity = bg_jobs->capacity * 2;
+        bg_jobs->pids = realloc(bg_jobs->pids, bg_jobs->capacity * sizeof(pid_t));
+    }
+
+    bg_jobs->pids[bg_jobs->count] = pid;
+    bg_jobs->count++;
+}
+
+void
+delete_bg_job(struct background_jobs *bg_jobs, int idx) {
+    if (!is_valid_pid_idx(bg_jobs, idx)) {
+        return;
+    }
+
+    for (int i = idx; i < bg_jobs->count - 1; i++) {
+        bg_jobs->pids[i] = bg_jobs->pids[i + 1];
+    }
+
+    bg_jobs->count--;
+}
+
+void
+free_bg_jobs(struct background_jobs *bg_jobs) {
+    free(bg_jobs->pids);
+}
+
+void
+check_bg_jobs(struct background_jobs *bg_jobs) {
+    int i = 0;
+    while (i < bg_jobs->count) {
+        int status;
+        pid_t wpid = waitpid(bg_jobs->pids[i], &status, WNOHANG);
+
+        if (wpid == -1) {
+            delete_bg_job(bg_jobs, i);
+        } else if (wpid == bg_jobs->pids[i]) {
+            if (WIFEXITED(status) || WIFSIGNALED(status)) {
+                delete_bg_job(bg_jobs, i);
+            } else {
+                i++;
+            }
+        } else {
+            i++;
+        }
+    }
+}
+
 static void
-execute_command_line(const struct command_line *line, int *exit_code)
+execute_command_line(const struct command_line *line, int *exit_code, struct background_jobs *bg_jobs)
 {
 	struct expr *e = line->head;
 	enum output_type out_type = line->out_type;
@@ -76,8 +144,14 @@ execute_command_line(const struct command_line *line, int *exit_code)
                 }
 
 				if (is_use_file) {
-					int flags = out_type == OUTPUT_TYPE_FILE_NEW ? O_RDWR | O_TRUNC | O_CREAT : O_RDWR | O_APPEND;
-					int fd = open(out_file, flags, 0644);
+				    int flags = O_WRONLY | O_CREAT;
+				    if (out_type == OUTPUT_TYPE_FILE_NEW) {
+				        flags |= O_TRUNC;
+				    } else {
+				        flags |= O_APPEND;
+				    }
+
+				    int fd = open(out_file, flags, 0644);
 					dup2(fd, STDOUT_FILENO);
 					close(fd);
 				}
@@ -104,17 +178,18 @@ execute_command_line(const struct command_line *line, int *exit_code)
 				exit(EXIT_FAILURE);
 			}
 
-			pids[pid_cnt++] = pid;
-
-			if (is_use_pipe) {
-				close(fds[1]);
-			}
+            if (line->is_background) {
+                add_bg_job(bg_jobs, pid);
+            } else {
+                pids[pid_cnt++] = pid;
+            }
 
 			if (fd_in != STDIN_FILENO) {
 				close(fd_in);
 			}
 
 			if (is_use_pipe) {
+			    close(fds[1]);
 				fd_in = fds[0];
 			} else {
 				fd_in = STDIN_FILENO;
@@ -142,6 +217,8 @@ main(void)
     int rc;
     int exit_code = 0;
     struct parser *p = parser_new();
+    struct background_jobs bg_jobs;
+    init_bg_jobs(&bg_jobs);
 
     while ((rc = read(STDIN_FILENO, buf, buf_size)) > 0) {
         parser_feed(p, buf, rc);
@@ -168,16 +245,19 @@ main(void)
 
         			command_line_delete(line);
         			parser_delete(p);
+        			free_bg_jobs(&bg_jobs);
 
         			return exit_code;
 				}
         	}
 
-            execute_command_line(line, &exit_code);
+            execute_command_line(line, &exit_code, &bg_jobs);
             command_line_delete(line);
+            check_bg_jobs(&bg_jobs);
         }
     }
 
+    free_bg_jobs(&bg_jobs);
     parser_delete(p);
     return exit_code;
 }
