@@ -33,8 +33,7 @@ add_bg_job(struct background_jobs *bg_jobs, pid_t pid) {
         bg_jobs->pids = realloc(bg_jobs->pids, bg_jobs->capacity * sizeof(pid_t));
     }
 
-    bg_jobs->pids[bg_jobs->count] = pid;
-    bg_jobs->count++;
+    bg_jobs->pids[bg_jobs->count++] = pid;
 }
 
 void
@@ -76,6 +75,39 @@ check_bg_jobs(struct background_jobs *bg_jobs) {
     }
 }
 
+struct pids_slice {
+	pid_t* pids;
+	int size;
+	int capacity;
+};
+
+void
+init_pids_slice(struct pids_slice* sl, int initial_capacity) {
+	sl->pids = calloc(initial_capacity, sizeof(pid_t));
+	sl->capacity = initial_capacity;
+	sl->size = 0;
+}
+
+void
+push_pids_slice(struct pids_slice* sl, pid_t pid) {
+	if (sl->size >= sl->capacity) {
+		sl->capacity *= 2;
+		sl->pids = realloc(sl->pids, sl->capacity * sizeof(pid_t));
+	}
+
+	sl->pids[sl->size++] = pid;
+}
+
+pid_t
+get_pid(struct pids_slice* sl, int idx) {
+	return sl->pids[idx];
+}
+
+void
+free_pids_slice(struct pids_slice* sl) {
+	free(sl->pids);
+}
+
 static void
 execute_command_line(const struct command_line *line, int *exit_code, struct background_jobs *bg_jobs)
 {
@@ -90,8 +122,8 @@ execute_command_line(const struct command_line *line, int *exit_code, struct bac
 	int fds[2];
 
 	pid_t pid;
-	int pid_cnt = 0;
-	pid_t pids[1024];
+	struct pids_slice pids_slice;
+	init_pids_slice(&pids_slice, 1024);
 
 	int fd_in = STDIN_FILENO;
 
@@ -128,6 +160,7 @@ execute_command_line(const struct command_line *line, int *exit_code, struct bac
             pid = fork();
             if (pid == -1) {
                 perror("fork failed");
+            	free_pids_slice(&pids_slice);
                 return;
             }
 
@@ -181,7 +214,7 @@ execute_command_line(const struct command_line *line, int *exit_code, struct bac
             if (line->is_background) {
                 add_bg_job(bg_jobs, pid);
             } else {
-                pids[pid_cnt++] = pid;
+            	push_pids_slice(&pids_slice, pid);
             }
 
 			if (fd_in != STDIN_FILENO) {
@@ -199,14 +232,16 @@ execute_command_line(const struct command_line *line, int *exit_code, struct bac
 		e = e->next;
 	}
 
-	for (int i = 0; i < pid_cnt; i++) {
+	for (int i = 0; i < pids_slice.size; i++) {
 		int status;
-		waitpid(pids[i], &status, 0);
+		waitpid(get_pid(&pids_slice, i), &status, 0);
 
 		if (WIFEXITED(status)) {
 			*exit_code = WEXITSTATUS(status);
 		}
 	}
+
+	free_pids_slice(&pids_slice);
 }
 
 int
