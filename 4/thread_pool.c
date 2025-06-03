@@ -245,7 +245,7 @@ thread_task_timed_join(struct thread_task *task, double timeout, void **result)
 	pthread_mutex_lock(&task->mutex);
 
 	struct timespec ts;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
+	clock_gettime(CLOCK_REALTIME, &ts);
 
 	time_t seconds = (time_t)timeout;
 	time_t ns = (time_t)((timeout - (long)seconds) * 1e9);
@@ -259,7 +259,7 @@ thread_task_timed_join(struct thread_task *task, double timeout, void **result)
 		pthread_cond_timedwait(&task->is_finished_cond, &task->mutex, &ts);
 
 		struct timespec current_ts;
-		clock_gettime(CLOCK_MONOTONIC, &current_ts);
+		clock_gettime(CLOCK_REALTIME, &current_ts);
 
 		long current_total_ns = current_ts.tv_sec * 1e9 + current_ts.tv_nsec;  
 
